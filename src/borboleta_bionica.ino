@@ -1,22 +1,21 @@
 /*
- * S-DiY RC Bionic Butterfly project 
+ * S-DiY RC Bionic Butterfly project
  * PROJECT: S-DiY 2 SERVO FLAP RC BIONIC BUTTERFLY
- * VERSION: 1.0 (SINE WAVE)
+ * VERSION: 1.1 (SINE WAVE + ELRS/CRSF)
  * AUTHOR:  [S-DiY channel/ TruongVanSu91]
  * DATE:    02/2026
  * COPYRIGHT (C) 2026. ALL RIGHTS RESERVED.
  * -----------------------------------------------------------------------------
- * PIN UPDATE: Receiver PPM on pin 2, servoLeft on pin 4, servoRight on pin 5
+ * PIN UPDATE: Receiver ELRS (CRSF) on Serial1 (RX1 pino 0 / TX1 pino 1),
+ *             servoLeft on pin 4, servoRight on pin 5
  * -----------------------------------------------------------------------------
  */
 
 #include <Servo.h>
-#include <PPMReader.h>
+#include <AlfredoCRSF.h>
 
-const byte interruptPin = 2;   // receiver PPM signal
-const byte ledPin = 6;         
-const byte channelAmount = 8;
-PPMReader ppm(interruptPin, channelAmount);
+const byte ledPin = 6;
+AlfredoCRSF crsf;
 
 Servo servoLeft, servoRight;
 
@@ -29,7 +28,7 @@ bool isPerchingState = false, wasFailsafe = true;
 
 int lastPosL = 90, lastPosR = 90;
 int lastChValues[8] = {1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500};
-const int ppmDeadband = 3; 
+const int channelDeadband = 3;
 
 int ledDebounceCounter = 0;
 const int ledThreshold = 5; 
@@ -46,41 +45,44 @@ void setup() {
   servoRight.attach(5, 500, 2500);  // right servo
   servoLeft.write(centerAngle);
   servoRight.write(centerAngle);
-  
-  Serial.println("--- BIONIC BUTTERFLY READY (SINE WAVE MODE) ---");
+
+  Serial1.begin(CRSF_BAUDRATE);   // UART de hardware ligado ao receptor ELRS
+  crsf.begin(Serial1);
+
+  Serial.println("--- BIONIC BUTTERFLY READY (SINE WAVE MODE / ELRS) ---");
 }
 
-int readPPMFiltered(byte ch) {
-  int raw = ppm.latestValidChannelValue(ch + 1, 1500);
-  if (abs(raw - lastChValues[ch]) > ppmDeadband) {
+int readChannelFiltered(byte ch) {
+  int raw = crsf.getChannel(ch + 1);
+  if (abs(raw - lastChValues[ch]) > channelDeadband) {
     lastChValues[ch] = raw;
   }
   return lastChValues[ch];
 }
 
 void loop() {
-  unsigned long ch3Raw = ppm.latestValidChannelValue(3, 0); 
-  bool isConnected = (ch3Raw != 0);
+  crsf.update();
+  bool isConnected = crsf.isLinkUp();
 
   if (!isConnected) {
-    digitalWrite(ledPin, LOW); 
+    digitalWrite(ledPin, LOW);
     processFailsafe();
   } else {
-    int steering = readPPMFiltered(0); 
-    int elevator = readPPMFiltered(1); 
-    int throttle = readPPMFiltered(2);    
-    int ch5Trim   = readPPMFiltered(4); 
-    int rawCh6    = readPPMFiltered(5); 
-    int ch7Switch = readPPMFiltered(6); 
-    int ch8Raw    = readPPMFiltered(7); 
+    int steering = readChannelFiltered(0);
+    int elevator = readChannelFiltered(1);
+    int throttle = readChannelFiltered(2);
+    int ch5Trim   = readChannelFiltered(4);
+    int rawCh6    = readChannelFiltered(5);
+    int ch7Switch = readChannelFiltered(6);
+    int ch8Raw    = readChannelFiltered(7);
 
     if (ch8Raw > 1550) { if (ledDebounceCounter < ledThreshold) ledDebounceCounter++; }
     else if (ch8Raw < 1450) { if (ledDebounceCounter > 0) ledDebounceCounter--; }
     digitalWrite(ledPin, (ledDebounceCounter >= ledThreshold) ? HIGH : LOW);
 
-    int steerValue = (abs(steering - 1500) > 10) ? map(steering, 900, 2100, -15, 15) : 0;
+    int steerValue = (abs(steering - 1500) > 10) ? map(steering, 1000, 2000, -15, 15) : 0;
     int finalSteer = steerValue + map(ch5Trim, 1000, 2000, -15, 15);
-    int elevOffset = (abs(elevator - 1500) > 10) ? map(elevator, 900, 2100, -15, 15) : 0;
+    int elevOffset = (abs(elevator - 1500) > 10) ? map(elevator, 1000, 2000, -15, 15) : 0;
     int pitchTrim = map(rawCh6, 1000, 2000, -maxPitchTrim, maxPitchTrim);
 
     if (throttle > 1100) isPerchingState = false;
